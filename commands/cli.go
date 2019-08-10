@@ -23,11 +23,11 @@ func CreateCli(version string) *cli.App {
 	app.HelpName = app.Name
 	app.Author = "Gruntwork <www.gruntwork.io>"
 	app.Version = version
-	app.Usage = "A CLI tool to cleanup cloud resources (AWS, Azure, GCP). THIS TOOL WILL COMPLETELY REMOVE ALL RESOURCES AND ITS EFFECTS ARE IRREVERSIBLE!!!"
+	app.Usage = "A CLI tool to nuke (delete) cloud resources."
 	app.Commands = []cli.Command{
 		{
 			Name:   "aws",
-			Usage:  "Clean up AWS resources (ASG, ELB, ELBv2, EBS, EC2, AMI, Snapshots, ELastic IP)",
+			Usage:  "BEWARE: DESTRUCTIVE OPERATION! Nukes AWS resources (ASG, ELB, ELBv2, EBS, EC2, AMI, Snapshots, Elastic IP).",
 			Action: errors.WithPanicHandling(awsNuke),
 			Flags: []cli.Flag{
 				cli.StringSliceFlag{
@@ -42,6 +42,16 @@ func CreateCli(version string) *cli.App {
 				cli.BoolFlag{
 					Name:  "force",
 					Usage: "Skip nuke confirmation prompt. WARNING: this will automatically delete all resources without any confirmation",
+				},
+			},
+		}, {
+			Name:   "defaults-aws",
+			Usage:  "Nukes unused AWS defaults (VPCs, security groups) across all regions enabled for this account.",
+			Action: errors.WithPanicHandling(awsDefaults),
+			Flags: []cli.Flag{
+				cli.BoolFlag{
+					Name:  "force",
+					Usage: "Skip confirmation prompt. WARNING: this will automatically delete defaults without any confirmation",
 				},
 			},
 		},
@@ -64,7 +74,10 @@ func parseDurationParam(paramValue string) (*time.Time, error) {
 }
 
 func awsNuke(c *cli.Context) error {
-	regions := aws.GetAllRegions()
+	regions, err := aws.GetEnabledRegions()
+	if err != nil {
+		return errors.WithStackTrace(err)
+	}
 	excludedRegions := c.StringSlice("exclude-region")
 
 	for _, excludedRegion := range excludedRegions {
@@ -104,18 +117,12 @@ func awsNuke(c *cli.Context) error {
 	}
 
 	if !c.Bool("force") {
-		color := color.New(color.FgHiRed, color.Bold)
-		color.Println("\nTHE NEXT STEPS ARE DESTRUCTIVE AND COMPLETELY IRREVERSIBLE, PROCEED WITH CAUTION!!!")
-
 		prompt := "\nAre you sure you want to nuke all listed resources? Enter 'nuke' to confirm: "
-		shellOptions := shell.ShellOptions{Logger: logging.Logger}
-		input, err := shell.PromptUserForInput(prompt, &shellOptions)
-
+		proceed, err := confirmationPrompt(prompt)
 		if err != nil {
-			return errors.WithStackTrace(err)
+			return err
 		}
-
-		if strings.ToLower(input) == "nuke" {
+		if proceed {
 			if err := aws.NukeAllResources(account, regions); err != nil {
 				return err
 			}
@@ -134,4 +141,50 @@ func awsNuke(c *cli.Context) error {
 	}
 
 	return nil
+}
+
+func awsDefaults(c *cli.Context) error {
+	vpcsByRegion, err := aws.GetDefaultVpcByRegion()
+	if err != nil {
+		return err
+	}
+
+	for _, vpc := range vpcsByRegion {
+		logging.Logger.Infof("* %s %s\n", vpc.VpcId, vpc.Region)
+	}
+
+	if !c.Bool("force") {
+		prompt := "\nAre you sure you want to nuke all listed resources? Enter 'nuke' to confirm: "
+		proceed, err := confirmationPrompt(prompt)
+		if err != nil {
+			return err
+		}
+
+		if proceed {
+			err := aws.NukeDefaultVpcs(vpcsByRegion)
+			if err != nil {
+				logging.Logger.Errorf("[Failed] %s", err)
+			}
+		}
+	}
+
+	return nil
+}
+
+func confirmationPrompt(prompt string) (bool, error) {
+	color := color.New(color.FgHiRed, color.Bold)
+	color.Println("\nTHE NEXT STEPS ARE DESTRUCTIVE AND COMPLETELY IRREVERSIBLE, PROCEED WITH CAUTION!!!")
+
+	shellOptions := shell.ShellOptions{Logger: logging.Logger}
+	input, err := shell.PromptUserForInput(prompt, &shellOptions)
+
+	if err != nil {
+		return false, errors.WithStackTrace(err)
+	}
+
+	if strings.ToLower(input) == "nuke" {
+		return true, nil
+	}
+
+	return false, nil
 }

@@ -153,6 +153,60 @@ func findEC2InstancesByNameTag(t *testing.T, session *session.Session, name stri
 	return instanceIds
 }
 
+// #############################################################################
+// Default VPC nuke test disabled because it breaks other tests that rely
+// on the presence of default VPCs!
+// #############################################################################
+// func createRandomDefaultVpc(t *testing.T, region string) DefaultVpc {
+// 	svc := ec2.New(newSession(region))
+// 	defaultVpc, err := getDefaultVpc(region)
+// 	require.NoError(t, err)
+// 	if defaultVpc == (DefaultVpc{}) {
+// 		vpc, err := svc.CreateDefaultVpc(nil)
+// 		require.NoError(t, err)
+// 		defaultVpc.Region = region
+// 		defaultVpc.VpcId = awsgo.StringValue(vpc.Vpc.VpcId)
+// 		defaultVpc.svc = svc
+// 	}
+// 	return defaultVpc
+// }
+//
+// func getRandomDefaultVpcs(t *testing.T, howMany int) []DefaultVpc {
+// 	var defaultVpcs []DefaultVpc
+//
+// 	for i := 0; i < howMany; i++ {
+// 		region := getRandomRegion()
+// 		defaultVpcs = append(defaultVpcs, createRandomDefaultVpc(t, region))
+// 	}
+// 	return defaultVpcs
+// }
+//
+// func TestNukeDefaultVpcs(t *testing.T) {
+// 	t.Parallel()
+//
+// 	// How many default VPCs to nuke for this test
+// 	count := 3
+//
+// 	defaultVpcs := getRandomDefaultVpcs(t, count)
+//
+// 	err := NukeDefaultVpcs(defaultVpcs)
+// 	require.NoError(t, err)
+//
+// 	for _, vpc := range defaultVpcs {
+// 		input := &ec2.DescribeVpcsInput{
+// 			Filters: []*ec2.Filter{
+// 				{
+// 					Name:   awsgo.String("vpc-id"),
+// 					Values: []*string{awsgo.String(vpc.VpcId)},
+// 				},
+// 			},
+// 		}
+// 		result, err := vpc.svc.DescribeVpcs(input)
+// 		require.NoError(t, err)
+// 		assert.Len(t, result.Vpcs, 0)
+// 	}
+// }
+
 func TestListInstances(t *testing.T) {
 	t.Parallel()
 

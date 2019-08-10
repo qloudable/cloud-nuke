@@ -6,39 +6,47 @@ import (
 	"time"
 
 	awsgo "github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/aws/endpoints"
 	"github.com/aws/aws-sdk-go/aws/session"
+	"github.com/aws/aws-sdk-go/service/ec2"
 	"github.com/gruntwork-io/cloud-nuke/logging"
 	"github.com/gruntwork-io/gruntwork-cli/collections"
 	"github.com/gruntwork-io/gruntwork-cli/errors"
 )
 
-// GetAllRegions - Returns a list of all AWS regions
-func GetAllRegions() []string {
-	// chinese and government regions are not accessible with regular accounts
-	reservedRegions := []string{
-		"cn-north-1", "cn-northwest-1", "us-gov-west-1", "us-gov-east-1",
+func newSession(region string) *session.Session {
+	return session.Must(
+		session.NewSessionWithOptions(
+			session.Options{
+				SharedConfigState: session.SharedConfigEnable,
+				Config: awsgo.Config{
+					Region: awsgo.String(region),
+				},
+			},
+		),
+	)
+}
+
+// Get regions marked as enabled for this account
+func GetEnabledRegions() ([]string, error) {
+	var regionNames []string
+	svc := ec2.New(newSession(""))
+	regions, err := svc.DescribeRegions(nil)
+	if err != nil {
+		return nil, err
 	}
 
-	resolver := endpoints.DefaultResolver()
-	partitions := resolver.(endpoints.EnumPartitions).Partitions()
-
-	var regions []string
-	for _, p := range partitions {
-		for id := range p.Regions() {
-			if !collections.ListContainsElement(reservedRegions, id) {
-				regions = append(regions, id)
-			}
-		}
+	for _, region := range regions.Regions {
+		regionNames = append(regionNames, awsgo.StringValue(region.RegionName))
 	}
 
-	return regions
+	return regionNames, nil
 }
 
 func getRandomRegion() string {
-	allRegions := GetAllRegions()
+	allRegions, _ := GetEnabledRegions()
 	rand.Seed(time.Now().UnixNano())
 	randIndex := rand.Intn(len(allRegions))
+	logging.Logger.Infof("Random region chosen: %s", allRegions[randIndex])
 	return allRegions[randIndex]
 }
 
