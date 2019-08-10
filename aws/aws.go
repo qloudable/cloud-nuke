@@ -29,7 +29,9 @@ func newSession(region string) *session.Session {
 // Get regions marked as enabled for this account
 func GetEnabledRegions() ([]string, error) {
 	var regionNames []string
-	svc := ec2.New(newSession(""))
+	svc := ec2.New(session.Must(session.NewSessionWithOptions(session.Options{
+		SharedConfigState: session.SharedConfigEnable,
+	})))
 	regions, err := svc.DescribeRegions(nil)
 	if err != nil {
 		return nil, err
