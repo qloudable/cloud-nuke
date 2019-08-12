@@ -230,7 +230,16 @@ func (dv DefaultVpc) nukeSubnets() error {
 }
 
 func (dv DefaultVpc) nukeRouteTables() error {
-	routeTables, _ := dv.svc.DescribeRouteTables(&ec2.DescribeRouteTablesInput{})
+	routeTables, _ := dv.svc.DescribeRouteTables(
+		&ec2.DescribeRouteTablesInput{
+			Filters: []*ec2.Filter{
+				&ec2.Filter{
+					Name:   awsgo.String("vpc-id"),
+					Values: []*string{awsgo.String(dv.VpcId)},
+				},
+			},
+		}
+	)
 	for _, routeTable := range routeTables.RouteTables {
 		// Skip route table of type main
 		if len(routeTable.Associations) > 0 && *routeTable.Associations[0].Main {

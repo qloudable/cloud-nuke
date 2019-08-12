@@ -13,6 +13,28 @@ import (
 	"github.com/gruntwork-io/gruntwork-cli/errors"
 )
 
+// OptInNotRequiredRegions contains all regions that are enabled by default on new AWS accounts
+// Beginning in Spring 2019, AWS requires new regions to be explicitly enabled
+// See https://aws.amazon.com/blogs/security/setting-permissions-to-enable-accounts-for-upcoming-aws-regions/
+var OptInNotRequiredRegions = [...]string{
+	"eu-north-1",
+	"ap-south-1",
+	"eu-west-3",
+	"eu-west-2",
+	"eu-west-1",
+	"ap-northeast-2",
+	"ap-northeast-1",
+	"sa-east-1",
+	"ca-central-1",
+	"ap-southeast-1",
+	"ap-southeast-2",
+	"eu-central-1",
+	"us-east-1",
+	"us-east-2",
+	"us-west-1",
+	"us-west-2",
+}
+
 func newSession(region string) *session.Session {
 	return session.Must(
 		session.NewSessionWithOptions(
@@ -29,9 +51,16 @@ func newSession(region string) *session.Session {
 // Get regions marked as enabled for this account
 func GetEnabledRegions() ([]string, error) {
 	var regionNames []string
-	svc := ec2.New(session.Must(session.NewSessionWithOptions(session.Options{
-		SharedConfigState: session.SharedConfigEnable,
-	})))
+
+	// We don't want to depend on a default region being set, so instead we
+	// will choose a region from the list of regions that are enabled by default
+	// and use that to enumerate all enabled regions.
+	// Corner case: user has intentionally disabled one or more regions that are
+	// enabled by default. If that region is chosen, API calls will fail.
+	rand.Seed(time.Now().UnixNano())
+	region := OptInNotRequiredRegions[rand.Intn(len(OptInNotRequiredRegions))]
+
+	svc := ec2.New(newSession(region))
 	regions, err := svc.DescribeRegions(nil)
 	if err != nil {
 		return nil, err
