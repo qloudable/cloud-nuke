@@ -144,30 +144,54 @@ func awsNuke(c *cli.Context) error {
 }
 
 func awsDefaults(c *cli.Context) error {
-	vpcsByRegion, err := aws.GetDefaultVpcByRegion()
+	regions, err := GetEnabledRegions()
 	if err != nil {
-		return err
+		logging.Logger.Errorf("[Failed] %s", err)
+		return nil, errors.WithStackTrace(err)
 	}
 
-	for _, vpc := range vpcsByRegion {
+	vpcPerRegion, err := aws.NewVpcPerRegion(regions)
+	if err != nil {
+		return errors.WithStackTrace(err)
+	}
+
+	vpcPerRegion, err = aws.GetDefaultVpcs(vpcPerRegion)
+	if err != nil {
+		return errors.WithStackTrace(err)
+	}
+
+	defaultSgs, err = aws.GetDefaultSecurityGroups(regions)
+	if err != nil {
+		return errors.WithStackTrace(err)
+	}
+
+	for _, vpc := range vpcPerRegion {
 		logging.Logger.Infof("* %s %s\n", vpc.VpcId, vpc.Region)
 	}
 
+	for _, sg := range defaultSgs {
+		logging.Logger.Infof("* %s %s %s\n", sg.GroupId, sg.GroupName, sg.Region)
+	}
+
+	var proceed bool
 	if !c.Bool("force") {
 		prompt := "\nAre you sure you want to nuke all listed resources? Enter 'nuke' to confirm: "
-		proceed, err := confirmationPrompt(prompt)
+		proceed, err = confirmationPrompt(prompt)
 		if err != nil {
 			return err
 		}
-
-		if proceed {
-			err := aws.NukeDefaultVpcs(vpcsByRegion)
-			if err != nil {
-				logging.Logger.Errorf("[Failed] %s", err)
-			}
-		}
 	}
 
+	if proceed || c.Bool("force") {
+		err := aws.NukeVpcs(vpcPerRegion)
+		if err != nil {
+			logging.Logger.Errorf("[Failed] %s", err)
+		}
+		err := aws.NukeDefaultSecurityGroups(defaultSgs)
+		if err != nil {
+			logging.Logger.Errorf("[Failed] %s", err)
+		}
+	}
 	return nil
 }
 

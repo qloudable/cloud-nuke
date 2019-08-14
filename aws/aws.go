@@ -1,6 +1,7 @@
 package aws
 
 import (
+	"fmt"
 	"math/rand"
 	"strings"
 	"time"
@@ -48,7 +49,21 @@ func newSession(region string) *session.Session {
 	)
 }
 
-// Get regions marked as enabled for this account
+// Try a describe regions command with the most likely enabled regions
+func retryDescribeRegions() (*ec2.DescribeRegionsOutput, error) {
+	for i := 0; i < len(OptInNotRequiredRegions); i++ {
+		region := OptInNotRequiredRegions[rand.Intn(len(OptInNotRequiredRegions))]
+		svc := ec2.New(newSession(region))
+		regions, err := svc.DescribeRegions(&ec2.DescribeRegionsInput{})
+		if err != nil {
+			continue
+		}
+		return regions, nil
+	}
+	return nil, errors.WithStackTrace(fmt.Errorf("could not find any enabled regions"))
+}
+
+// Get all regions that are enabled (DescribeRegions excludes those not enabled by default)
 func GetEnabledRegions() ([]string, error) {
 	var regionNames []string
 
@@ -57,11 +72,8 @@ func GetEnabledRegions() ([]string, error) {
 	// and use that to enumerate all enabled regions.
 	// Corner case: user has intentionally disabled one or more regions that are
 	// enabled by default. If that region is chosen, API calls will fail.
-	rand.Seed(time.Now().UnixNano())
-	region := OptInNotRequiredRegions[rand.Intn(len(OptInNotRequiredRegions))]
-
-	svc := ec2.New(newSession(region))
-	regions, err := svc.DescribeRegions(nil)
+	// Therefore we retry until one of the regions works.
+	regions, err := retryDescribeRegions()
 	if err != nil {
 		return nil, err
 	}

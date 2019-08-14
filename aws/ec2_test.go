@@ -8,9 +8,30 @@ import (
 	awsgo "github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/ec2"
+	"github.com/golang/mock/gomock"
+	"github.com/gruntwork-io/cloud-nuke/mocks"
 	"github.com/gruntwork-io/cloud-nuke/util"
 	gruntworkerrors "github.com/gruntwork-io/gruntwork-cli/errors"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+const (
+	ExampleId                   = "a1b2c3d4e5f601345"
+	ExampleIdTwo                = "a1b2c3d4e5f654321"
+	ExampleIdThree              = "a1b2c3d4e5f632154"
+	ExampleVpcId                = "vpc-" + ExampleId
+	ExampleVpcIdTwo             = "vpc-" + ExampleIdTwo
+	ExampleVpcIdThree           = "vpc-" + ExampleIdThree
+	ExampleSubnetId             = "subnet-" + ExampleId
+	ExampleSubnetIdTwo          = "subnet-" + ExampleIdTwo
+	ExampleSubnetIdThree        = "subnet-" + ExampleIdThree
+	ExampleRouteTableId         = "rtb-" + ExampleId
+	ExampleNetworkAclId         = "acl-" + ExampleId
+	ExampleSecurityGroupId      = "sg-" + ExampleId
+	ExampleSecurityGroupIdTwo   = "sg-" + ExampleIdTwo
+	ExampleSecurityGroupIdThree = "sg-" + ExampleIdThree
+	ExampleInternetGatewayId    = "igw-" + ExampleId
 )
 
 // getAMIIdByName - Retrieves an AMI ImageId given the name of the Id. Used for
@@ -153,60 +174,6 @@ func findEC2InstancesByNameTag(t *testing.T, session *session.Session, name stri
 	return instanceIds
 }
 
-// #############################################################################
-// Default VPC nuke test disabled because it breaks other tests that rely
-// on the presence of default VPCs!
-// #############################################################################
-// func createRandomDefaultVpc(t *testing.T, region string) DefaultVpc {
-// 	svc := ec2.New(newSession(region))
-// 	defaultVpc, err := getDefaultVpc(region)
-// 	require.NoError(t, err)
-// 	if defaultVpc == (DefaultVpc{}) {
-// 		vpc, err := svc.CreateDefaultVpc(nil)
-// 		require.NoError(t, err)
-// 		defaultVpc.Region = region
-// 		defaultVpc.VpcId = awsgo.StringValue(vpc.Vpc.VpcId)
-// 		defaultVpc.svc = svc
-// 	}
-// 	return defaultVpc
-// }
-//
-// func getRandomDefaultVpcs(t *testing.T, howMany int) []DefaultVpc {
-// 	var defaultVpcs []DefaultVpc
-//
-// 	for i := 0; i < howMany; i++ {
-// 		region := getRandomRegion()
-// 		defaultVpcs = append(defaultVpcs, createRandomDefaultVpc(t, region))
-// 	}
-// 	return defaultVpcs
-// }
-//
-// func TestNukeDefaultVpcs(t *testing.T) {
-// 	t.Parallel()
-//
-// 	// How many default VPCs to nuke for this test
-// 	count := 3
-//
-// 	defaultVpcs := getRandomDefaultVpcs(t, count)
-//
-// 	err := NukeDefaultVpcs(defaultVpcs)
-// 	require.NoError(t, err)
-//
-// 	for _, vpc := range defaultVpcs {
-// 		input := &ec2.DescribeVpcsInput{
-// 			Filters: []*ec2.Filter{
-// 				{
-// 					Name:   awsgo.String("vpc-id"),
-// 					Values: []*string{awsgo.String(vpc.VpcId)},
-// 				},
-// 			},
-// 		}
-// 		result, err := vpc.svc.DescribeVpcs(input)
-// 		require.NoError(t, err)
-// 		assert.Len(t, result.Vpcs, 0)
-// 	}
-// }
-
 func TestListInstances(t *testing.T) {
 	t.Parallel()
 
@@ -276,3 +243,434 @@ func TestNukeInstances(t *testing.T) {
 		assert.NotContains(t, instances, *instanceID)
 	}
 }
+
+func getTestVpcs(mockEC2 *mock_ec2iface.MockEC2API) []Vpc {
+	return []Vpc{
+		{
+			Region: "ap-southeast-1",
+			svc:    mockEC2,
+		},
+		{
+			Region: "eu-west-3",
+			svc:    mockEC2,
+		},
+		{
+			Region: "ca-central-1",
+			svc:    mockEC2,
+		},
+	}
+}
+
+func getDefaultDescribeVpcsInput() *ec2.DescribeVpcsInput {
+	return &ec2.DescribeVpcsInput{
+		Filters: []*ec2.Filter{
+			{
+				Name:   awsgo.String("isDefault"),
+				Values: []*string{awsgo.String("true")},
+			},
+		},
+	}
+}
+
+func TestGetDefaultVpcs(t *testing.T) {
+	t.Parallel()
+
+	mockCtrl := gomock.NewController(t)
+	defer mockCtrl.Finish()
+	mockEC2 := mock_ec2iface.NewMockEC2API(mockCtrl)
+
+	vpcs := getTestVpcs(mockEC2)
+
+	describeVpcsInput := getDefaultDescribeVpcsInput()
+	describeVpcsOutputOne := &ec2.DescribeVpcsOutput{
+		Vpcs: []*ec2.Vpc{
+			{VpcId: awsgo.String(ExampleVpcId)},
+		},
+	}
+	describeVpcsFunc := func(input *ec2.DescribeVpcsInput) (*ec2.DescribeVpcsOutput, error) {
+		return describeVpcsOutputOne, nil
+	}
+	describeVpcsOutputTwo := &ec2.DescribeVpcsOutput{
+		Vpcs: []*ec2.Vpc{
+			{VpcId: awsgo.String(ExampleVpcIdTwo)},
+		},
+	}
+	describeVpcsFuncTwo := func(input *ec2.DescribeVpcsInput) (*ec2.DescribeVpcsOutput, error) {
+		return describeVpcsOutputTwo, nil
+	}
+	describeVpcsOutputThree := &ec2.DescribeVpcsOutput{Vpcs: []*ec2.Vpc{}}
+	describeVpcsFuncThree := func(input *ec2.DescribeVpcsInput) (*ec2.DescribeVpcsOutput, error) {
+		return describeVpcsOutputThree, nil
+	}
+	gomock.InOrder(
+		mockEC2.EXPECT().DescribeVpcs(describeVpcsInput).DoAndReturn(describeVpcsFunc),
+		mockEC2.EXPECT().DescribeVpcs(describeVpcsInput).DoAndReturn(describeVpcsFuncTwo),
+		mockEC2.EXPECT().DescribeVpcs(describeVpcsInput).DoAndReturn(describeVpcsFuncThree),
+	)
+
+	vpcs, err := GetDefaultVpcs(vpcs)
+	require.NoError(t, err)
+	assert.Len(t, vpcs, 2, "There should be two default VPCs")
+}
+
+func getTestVpcsWithIds(mockEC2 *mock_ec2iface.MockEC2API) []Vpc {
+	return []Vpc{
+		{
+			Region: "ap-southeast-1",
+			VpcId:  ExampleVpcId,
+			svc:    mockEC2,
+		},
+		{
+			Region: "eu-west-3",
+			VpcId:  ExampleVpcIdTwo,
+			svc:    mockEC2,
+		},
+		{
+			Region: "ca-central-1",
+			VpcId:  ExampleVpcIdThree,
+			svc:    mockEC2,
+		},
+	}
+}
+
+func getDescribeInternetGatewaysInput(vpcId string) *ec2.DescribeInternetGatewaysInput {
+	return &ec2.DescribeInternetGatewaysInput{
+		Filters: []*ec2.Filter{
+			&ec2.Filter{
+				Name:   awsgo.String("attachment.vpc-id"),
+				Values: []*string{awsgo.String(vpcId)},
+			},
+		},
+	}
+}
+
+func getDescribeInternetGatewaysOutput(gatewayId string) *ec2.DescribeInternetGatewaysOutput {
+	return &ec2.DescribeInternetGatewaysOutput{
+		InternetGateways: []*ec2.InternetGateway{
+			{InternetGatewayId: awsgo.String(gatewayId)},
+		},
+	}
+}
+
+func getDetachInternetGatewayInput(vpcId, gatewayId string) *ec2.DetachInternetGatewayInput {
+	return &ec2.DetachInternetGatewayInput{
+		InternetGatewayId: awsgo.String(gatewayId),
+		VpcId:             awsgo.String(vpcId),
+	}
+}
+
+func getDeleteInternetGatewayInput(gatewayId string) *ec2.DeleteInternetGatewayInput {
+	return &ec2.DeleteInternetGatewayInput{
+		InternetGatewayId: awsgo.String(gatewayId),
+	}
+}
+
+func getDescribeSubnetsInput(vpcId string) *ec2.DescribeSubnetsInput {
+	return &ec2.DescribeSubnetsInput{
+		Filters: []*ec2.Filter{
+			&ec2.Filter{
+				Name:   awsgo.String("vpc-id"),
+				Values: []*string{awsgo.String(vpcId)},
+			},
+		},
+	}
+}
+
+func getDescribeSubnetsOutput(subnetIds []string) *ec2.DescribeSubnetsOutput {
+	var subnets []*ec2.Subnet
+	for _, subnetId := range subnetIds {
+		subnets = append(subnets, &ec2.Subnet{SubnetId: awsgo.String(subnetId)})
+	}
+	return &ec2.DescribeSubnetsOutput{Subnets: subnets}
+}
+
+func getDeleteSubnetInput(subnetId string) *ec2.DeleteSubnetInput {
+	return &ec2.DeleteSubnetInput{
+		SubnetId: awsgo.String(subnetId),
+	}
+}
+
+func getDescribeRouteTablesInput(vpcId string) *ec2.DescribeRouteTablesInput {
+	return &ec2.DescribeRouteTablesInput{
+		Filters: []*ec2.Filter{
+			&ec2.Filter{
+				Name:   awsgo.String("vpc-id"),
+				Values: []*string{awsgo.String(vpcId)},
+			},
+		},
+	}
+}
+
+func getDescribeRouteTablesOutput(routeTableIds []string) *ec2.DescribeRouteTablesOutput {
+	var routeTables []*ec2.RouteTable
+	for _, routeTableId := range routeTableIds {
+		routeTables = append(routeTables, &ec2.RouteTable{RouteTableId: awsgo.String(routeTableId)})
+	}
+	return &ec2.DescribeRouteTablesOutput{RouteTables: routeTables}
+}
+
+func getDeleteRouteTableInput(routeTableId string) *ec2.DeleteRouteTableInput {
+	return &ec2.DeleteRouteTableInput{
+		RouteTableId: awsgo.String(routeTableId),
+	}
+}
+
+func getDescribeNetworkAclsInput(vpcId string) *ec2.DescribeNetworkAclsInput {
+	return &ec2.DescribeNetworkAclsInput{
+		Filters: []*ec2.Filter{
+			&ec2.Filter{
+				Name:   awsgo.String("default"),
+				Values: []*string{awsgo.String("false")},
+			},
+			&ec2.Filter{
+				Name:   awsgo.String("vpc-id"),
+				Values: []*string{awsgo.String(vpcId)},
+			},
+		},
+	}
+}
+
+func getDescribeNetworkAclsOutput(networkAclIds []string) *ec2.DescribeNetworkAclsOutput {
+	var networkAcls []*ec2.NetworkAcl
+	for _, networkAclId := range networkAclIds {
+		networkAcls = append(networkAcls, &ec2.NetworkAcl{NetworkAclId: awsgo.String(networkAclId)})
+	}
+	return &ec2.DescribeNetworkAclsOutput{NetworkAcls: networkAcls}
+}
+
+func getDeleteNetworkAclInput(networkAclId string) *ec2.DeleteNetworkAclInput {
+	return &ec2.DeleteNetworkAclInput{
+		NetworkAclId: awsgo.String(networkAclId),
+	}
+}
+
+func getDescribeSecurityGroupsInput(vpcId string) *ec2.DescribeSecurityGroupsInput {
+	return &ec2.DescribeSecurityGroupsInput{
+		Filters: []*ec2.Filter{
+			&ec2.Filter{
+				Name:   awsgo.String("vpc-id"),
+				Values: []*string{awsgo.String(vpcId)},
+			},
+		},
+	}
+}
+
+func getDescribeSecurityGroupsOutput(securityGroupIds []string) *ec2.DescribeSecurityGroupsOutput {
+	var securityGroups []*ec2.SecurityGroup
+	for _, securityGroup := range securityGroupIds {
+		securityGroups = append(securityGroups, &ec2.SecurityGroup{
+			GroupId:   awsgo.String(securityGroup),
+			GroupName: awsgo.String(""),
+		})
+	}
+	return &ec2.DescribeSecurityGroupsOutput{SecurityGroups: securityGroups}
+}
+
+func getDeleteSecurityGroupInput(securityGroupId string) *ec2.DeleteSecurityGroupInput {
+	return &ec2.DeleteSecurityGroupInput{
+		GroupId: awsgo.String(securityGroupId),
+	}
+}
+
+func getDeleteVpcInput(vpcId string) *ec2.DeleteVpcInput {
+	return &ec2.DeleteVpcInput{
+		VpcId: awsgo.String(vpcId),
+	}
+}
+
+func TestNukeVpcs(t *testing.T) {
+	mockCtrl := gomock.NewController(t)
+	defer mockCtrl.Finish()
+
+	mockEC2 := mock_ec2iface.NewMockEC2API(mockCtrl)
+
+	vpcs := getTestVpcsWithIds(mockEC2)
+	for _, vpc := range vpcs {
+		describeInternetGatewaysInput := getDescribeInternetGatewaysInput(vpc.VpcId)
+		describeInternetGatewaysOutput := getDescribeInternetGatewaysOutput(ExampleInternetGatewayId)
+		describeInternetGatewaysFunc := func(input *ec2.DescribeInternetGatewaysInput) (*ec2.DescribeInternetGatewaysOutput, error) {
+			return describeInternetGatewaysOutput, nil
+		}
+		detachInternetGatewayInput := getDetachInternetGatewayInput(vpc.VpcId, ExampleInternetGatewayId)
+		deleteInternetGatewayInput := getDeleteInternetGatewayInput(ExampleInternetGatewayId)
+
+		describeSubnetsInput := getDescribeSubnetsInput(vpc.VpcId)
+		describeSubnetsOutput := getDescribeSubnetsOutput([]string{ExampleSubnetId, ExampleSubnetIdTwo, ExampleSubnetIdThree})
+		describeSubnetsFunc := func(input *ec2.DescribeSubnetsInput) (*ec2.DescribeSubnetsOutput, error) {
+			return describeSubnetsOutput, nil
+		}
+		deleteSubnetInputOne := getDeleteSubnetInput(ExampleSubnetId)
+		deleteSubnetInputTwo := getDeleteSubnetInput(ExampleSubnetIdTwo)
+		deleteSubnetInputThree := getDeleteSubnetInput(ExampleSubnetIdThree)
+
+		describeRouteTablesInput := getDescribeRouteTablesInput(vpc.VpcId)
+		describeRouteTablesOutput := getDescribeRouteTablesOutput([]string{ExampleRouteTableId})
+		describeRouteTablesFunc := func(input *ec2.DescribeRouteTablesInput) (*ec2.DescribeRouteTablesOutput, error) {
+			return describeRouteTablesOutput, nil
+		}
+		deleteRouteTableInput := getDeleteRouteTableInput(ExampleRouteTableId)
+
+		describeNetworkAclsInput := getDescribeNetworkAclsInput(vpc.VpcId)
+		describeNetworkAclsOutput := getDescribeNetworkAclsOutput([]string{ExampleNetworkAclId})
+		describeNetworkAclsFunc := func(input *ec2.DescribeNetworkAclsInput) (*ec2.DescribeNetworkAclsOutput, error) {
+			return describeNetworkAclsOutput, nil
+		}
+		deleteNetworkAclInput := getDeleteNetworkAclInput(ExampleNetworkAclId)
+
+		describeSecurityGroupsInput := getDescribeSecurityGroupsInput(vpc.VpcId)
+		describeSecurityGroupsOutput := getDescribeSecurityGroupsOutput([]string{ExampleSecurityGroupId})
+		describeSecurityGroupsFunc := func(input *ec2.DescribeSecurityGroupsInput) (*ec2.DescribeSecurityGroupsOutput, error) {
+			return describeSecurityGroupsOutput, nil
+		}
+		deleteSecurityGroupInput := getDeleteSecurityGroupInput(ExampleSecurityGroupId)
+
+		deleteVpcInput := getDeleteVpcInput(vpc.VpcId)
+
+		gomock.InOrder(
+			mockEC2.EXPECT().DescribeInternetGateways(describeInternetGatewaysInput).DoAndReturn(describeInternetGatewaysFunc),
+			mockEC2.EXPECT().DetachInternetGateway(detachInternetGatewayInput),
+			mockEC2.EXPECT().DeleteInternetGateway(deleteInternetGatewayInput),
+			mockEC2.EXPECT().DescribeSubnets(describeSubnetsInput).DoAndReturn(describeSubnetsFunc),
+			mockEC2.EXPECT().DeleteSubnet(deleteSubnetInputOne),
+			mockEC2.EXPECT().DeleteSubnet(deleteSubnetInputTwo),
+			mockEC2.EXPECT().DeleteSubnet(deleteSubnetInputThree),
+			mockEC2.EXPECT().DescribeRouteTables(describeRouteTablesInput).DoAndReturn(describeRouteTablesFunc),
+			mockEC2.EXPECT().DeleteRouteTable(deleteRouteTableInput),
+			mockEC2.EXPECT().DescribeNetworkAcls(describeNetworkAclsInput).DoAndReturn(describeNetworkAclsFunc),
+			mockEC2.EXPECT().DeleteNetworkAcl(deleteNetworkAclInput),
+			mockEC2.EXPECT().DescribeSecurityGroups(describeSecurityGroupsInput).DoAndReturn(describeSecurityGroupsFunc),
+			mockEC2.EXPECT().DeleteSecurityGroup(deleteSecurityGroupInput),
+			mockEC2.EXPECT().DeleteVpc(deleteVpcInput),
+		)
+	}
+
+	err := NukeVpcs(vpcs)
+	require.NoError(t, err)
+}
+
+func getDescribeSecurityGroupsInputByName(groupName string) *ec2.DescribeSecurityGroupsInput {
+	return &ec2.DescribeSecurityGroupsInput{
+		GroupNames: []*string{awsgo.String(groupName)},
+	}
+}
+
+func getDescribeDefaultSecurityGroupsOutput(groups []DefaultSecurityGroup) *ec2.DescribeSecurityGroupsOutput {
+	var securityGroups []*ec2.SecurityGroup
+	for _, group := range groups {
+		securityGroups = append(securityGroups, &ec2.SecurityGroup{
+			GroupId:   awsgo.String(group.GroupId),
+			GroupName: awsgo.String("default"),
+		})
+	}
+	return &ec2.DescribeSecurityGroupsOutput{SecurityGroups: securityGroups}
+}
+
+func TestNukeDefaultSecurityGroups(t *testing.T) {
+	mockCtrl := gomock.NewController(t)
+	defer mockCtrl.Finish()
+
+	mockEC2 := mock_ec2iface.NewMockEC2API(mockCtrl)
+
+	regions := []string{
+		"ap-southeast-1",
+		"eu-west-3",
+	}
+
+	groups := []DefaultSecurityGroup{
+		{
+			GroupName: "default",
+			GroupId:   ExampleSecurityGroupId,
+		},
+		{
+			GroupName: "default",
+			GroupId:   ExampleSecurityGroupIdTwo,
+		},
+	}
+	describeSecurityGroupsInput := getDescribeSecurityGroupsInputByName("default")
+	describeSecurityGroupsOutputOne := getDescribeDefaultSecurityGroupsOutput(groups)
+	describeSecurityGroupsFuncOne := func(input *ec2.DescribeSecurityGroupsInput) (*ec2.DescribeSecurityGroupsOutput, error) {
+		return describeSecurityGroupsOutputOne, nil
+	}
+	groups = []DefaultSecurityGroup{
+		{
+			GroupName: "default",
+			GroupId:   ExampleSecurityGroupIdThree,
+		},
+	}
+	describeSecurityGroupsOutputTwo := getDescribeDefaultSecurityGroupsOutput(groups)
+	describeSecurityGroupsFuncTwo := func(input *ec2.DescribeSecurityGroupsInput) (*ec2.DescribeSecurityGroupsOutput, error) {
+		return describeSecurityGroupsOutputTwo, nil
+	}
+	deleteSecurityGroupInputOne := getDeleteSecurityGroupInput(ExampleSecurityGroupId)
+	deleteSecurityGroupInputTwo := getDeleteSecurityGroupInput(ExampleSecurityGroupIdTwo)
+	deleteSecurityGroupInputThree := getDeleteSecurityGroupInput(ExampleSecurityGroupIdThree)
+
+	gomock.InOrder(
+		mockEC2.EXPECT().DescribeSecurityGroups(describeSecurityGroupsInput).DoAndReturn(describeSecurityGroupsFuncOne),
+		mockEC2.EXPECT().DescribeSecurityGroups(describeSecurityGroupsInput).DoAndReturn(describeSecurityGroupsFuncTwo),
+		mockEC2.EXPECT().DeleteSecurityGroup(deleteSecurityGroupInputOne),
+		mockEC2.EXPECT().DeleteSecurityGroup(deleteSecurityGroupInputTwo),
+		mockEC2.EXPECT().DeleteSecurityGroup(deleteSecurityGroupInputThree),
+	)
+
+	securityGroups, err := GetDefaultSgs(regions)
+	require.NoError(t, err)
+
+	err = NukeDefaultSecurityGroups(securityGroups)
+	require.NoError(t, err)
+}
+
+// **********************************************************************************
+// The test methodology below deletes default VPCs for reals which breaks other tests
+// and hence is commented out in favor of the mock testing approach above
+// **********************************************************************************
+// func createRandomDefaultVpc(t *testing.T, region string) Vpc {
+// 	svc := ec2.New(newSession(region))
+// 	defaultVpc, err := getDefaultVpc(region)
+// 	require.NoError(t, err)
+// 	if defaultVpc == (Vpc{}) {
+// 		vpc, err := svc.CreateDefaultVpc(nil)
+// 		require.NoError(t, err)
+// 		defaultVpc.Region = region
+// 		defaultVpc.VpcId = awsgo.StringValue(vpc.Vpc.VpcId)
+// 		defaultVpc.svc = svc
+// 	}
+// 	return defaultVpc
+// }
+//
+// func getRandomDefaultVpcs(t *testing.T, howMany int) []Vpc {
+// 	var defaultVpcs []Vpc
+//
+// 	for i := 0; i < howMany; i++ {
+// 		region := getRandomRegion()
+// 		defaultVpcs = append(defaultVpcs, createRandomDefaultVpc(t, region))
+// 	}
+// 	return defaultVpcs
+// }
+//
+//
+// func TestNukeDefaultVpcs(t *testing.T) {
+// 	t.Parallel()
+//
+// 	// How many default VPCs to nuke for this test
+// 	count := 3
+//
+// 	defaultVpcs := getRandomDefaultVpcs(t, count)
+//
+// 	err := NukeVpcs(defaultVpcs)
+// 	require.NoError(t, err)
+//
+// 	for _, vpc := range defaultVpcs {
+// 		input := &ec2.DescribeVpcsInput{
+// 			Filters: []*ec2.Filter{
+// 				{
+// 					Name:   awsgo.String("vpc-id"),
+// 					Values: []*string{awsgo.String(vpc.VpcId)},
+// 				},
+// 			},
+// 		}
+// 		result, err := vpc.svc.DescribeVpcs(input)
+// 		require.NoError(t, err)
+// 		assert.Len(t, result.Vpcs, 0)
+// 	}
+// }
