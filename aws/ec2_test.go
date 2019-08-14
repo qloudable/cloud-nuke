@@ -548,10 +548,8 @@ func TestNukeVpcs(t *testing.T) {
 	require.NoError(t, err)
 }
 
-func getDescribeSecurityGroupsInputByName(groupName string) *ec2.DescribeSecurityGroupsInput {
-	return &ec2.DescribeSecurityGroupsInput{
-		GroupNames: []*string{awsgo.String(groupName)},
-	}
+func getDescribeSecurityGroupsInputEmpty() *ec2.DescribeSecurityGroupsInput {
+	return &ec2.DescribeSecurityGroupsInput{}
 }
 
 func getDescribeDefaultSecurityGroupsOutput(groups []DefaultSecurityGroup) *ec2.DescribeSecurityGroupsOutput {
@@ -578,45 +576,51 @@ func TestNukeDefaultSecurityGroups(t *testing.T) {
 
 	groups := []DefaultSecurityGroup{
 		{
+			Region:    regions[0],
 			GroupName: "default",
 			GroupId:   ExampleSecurityGroupId,
+			svc:       mockEC2,
 		},
 		{
+			Region:    regions[0],
 			GroupName: "default",
 			GroupId:   ExampleSecurityGroupIdTwo,
+			svc:       mockEC2,
+		},
+		{
+			Region:    regions[1],
+			GroupName: "default",
+			GroupId:   ExampleSecurityGroupIdThree,
+			svc:       mockEC2,
 		},
 	}
-	describeSecurityGroupsInput := getDescribeSecurityGroupsInputByName("default")
-	describeSecurityGroupsOutputOne := getDescribeDefaultSecurityGroupsOutput(groups)
+	describeSecurityGroupsInput := getDescribeSecurityGroupsInputEmpty()
+	describeSecurityGroupsOutputOne := getDescribeDefaultSecurityGroupsOutput(groups[0:2])
 	describeSecurityGroupsFuncOne := func(input *ec2.DescribeSecurityGroupsInput) (*ec2.DescribeSecurityGroupsOutput, error) {
 		return describeSecurityGroupsOutputOne, nil
 	}
-	groups = []DefaultSecurityGroup{
-		{
-			GroupName: "default",
-			GroupId:   ExampleSecurityGroupIdThree,
-		},
-	}
-	describeSecurityGroupsOutputTwo := getDescribeDefaultSecurityGroupsOutput(groups)
+	describeSecurityGroupsOutputTwo := getDescribeDefaultSecurityGroupsOutput(groups[2:])
 	describeSecurityGroupsFuncTwo := func(input *ec2.DescribeSecurityGroupsInput) (*ec2.DescribeSecurityGroupsOutput, error) {
 		return describeSecurityGroupsOutputTwo, nil
 	}
-	deleteSecurityGroupInputOne := getDeleteSecurityGroupInput(ExampleSecurityGroupId)
-	deleteSecurityGroupInputTwo := getDeleteSecurityGroupInput(ExampleSecurityGroupIdTwo)
-	deleteSecurityGroupInputThree := getDeleteSecurityGroupInput(ExampleSecurityGroupIdThree)
 
 	gomock.InOrder(
 		mockEC2.EXPECT().DescribeSecurityGroups(describeSecurityGroupsInput).DoAndReturn(describeSecurityGroupsFuncOne),
 		mockEC2.EXPECT().DescribeSecurityGroups(describeSecurityGroupsInput).DoAndReturn(describeSecurityGroupsFuncTwo),
-		mockEC2.EXPECT().DeleteSecurityGroup(deleteSecurityGroupInputOne),
-		mockEC2.EXPECT().DeleteSecurityGroup(deleteSecurityGroupInputTwo),
-		mockEC2.EXPECT().DeleteSecurityGroup(deleteSecurityGroupInputThree),
+		mockEC2.EXPECT().RevokeSecurityGroupIngress(groups[0].getDefaultSecurityGroupIngressRule()),
+		mockEC2.EXPECT().RevokeSecurityGroupEgress(groups[0].getDefaultSecurityGroupEgressRule()),
+		mockEC2.EXPECT().RevokeSecurityGroupIngress(groups[1].getDefaultSecurityGroupIngressRule()),
+		mockEC2.EXPECT().RevokeSecurityGroupEgress(groups[1].getDefaultSecurityGroupEgressRule()),
+		mockEC2.EXPECT().RevokeSecurityGroupIngress(groups[2].getDefaultSecurityGroupIngressRule()),
+		mockEC2.EXPECT().RevokeSecurityGroupEgress(groups[2].getDefaultSecurityGroupEgressRule()),
 	)
 
-	securityGroups, err := GetDefaultSgs(regions)
-	require.NoError(t, err)
+	for range regions {
+		_, err := DescribeSecurityGroups(mockEC2)
+		require.NoError(t, err)
+	}
 
-	err = NukeDefaultSecurityGroups(securityGroups)
+	err := NukeDefaultSecurityGroupRules(groups)
 	require.NoError(t, err)
 }
 

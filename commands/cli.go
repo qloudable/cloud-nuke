@@ -144,38 +144,47 @@ func awsNuke(c *cli.Context) error {
 }
 
 func awsDefaults(c *cli.Context) error {
-	regions, err := GetEnabledRegions()
+	logging.Logger.Infoln("Identifying enabled regions")
+	regions, err := aws.GetEnabledRegions()
 	if err != nil {
-		logging.Logger.Errorf("[Failed] %s", err)
-		return nil, errors.WithStackTrace(err)
+		return errors.WithStackTrace(err)
+	}
+	for _, region := range regions {
+		logging.Logger.Infof("Found enabled region %s", region)
 	}
 
-	vpcPerRegion, err := aws.NewVpcPerRegion(regions)
+	err = defaultVpcs(c, regions)
 	if err != nil {
 		return errors.WithStackTrace(err)
 	}
 
-	vpcPerRegion, err = aws.GetDefaultVpcs(vpcPerRegion)
+	err = defaultSecurityGroups(c, regions)
+	if err != nil {
+		return errors.WithStackTrace(err)
+	}
+	return nil
+}
+
+func defaultVpcs(c *cli.Context, regions []string) error {
+	logging.Logger.Infof("Discovering default VPCs")
+	vpcPerRegion := aws.NewVpcPerRegion(regions)
+	vpcPerRegion, err := aws.GetDefaultVpcs(vpcPerRegion)
 	if err != nil {
 		return errors.WithStackTrace(err)
 	}
 
-	defaultSgs, err = aws.GetDefaultSecurityGroups(regions)
-	if err != nil {
-		return errors.WithStackTrace(err)
+	if len(vpcPerRegion) == 0 {
+		logging.Logger.Info("No default VPCs found.")
+		return nil
 	}
 
 	for _, vpc := range vpcPerRegion {
-		logging.Logger.Infof("* %s %s\n", vpc.VpcId, vpc.Region)
-	}
-
-	for _, sg := range defaultSgs {
-		logging.Logger.Infof("* %s %s %s\n", sg.GroupId, sg.GroupName, sg.Region)
+		logging.Logger.Infof("* Default VPC %s %s", vpc.VpcId, vpc.Region)
 	}
 
 	var proceed bool
 	if !c.Bool("force") {
-		prompt := "\nAre you sure you want to nuke all listed resources? Enter 'nuke' to confirm: "
+		prompt := "\nAre you sure you want to nuke all default VPCs? Enter 'nuke' to confirm: "
 		proceed, err = confirmationPrompt(prompt)
 		if err != nil {
 			return err
@@ -187,7 +196,32 @@ func awsDefaults(c *cli.Context) error {
 		if err != nil {
 			logging.Logger.Errorf("[Failed] %s", err)
 		}
-		err := aws.NukeDefaultSecurityGroups(defaultSgs)
+	}
+	return nil
+}
+
+func defaultSecurityGroups(c *cli.Context, regions []string) error {
+	logging.Logger.Infof("Discovering default security groups")
+	defaultSgs, err := aws.GetSecurityGroups(regions)
+	if err != nil {
+		return errors.WithStackTrace(err)
+	}
+
+	for _, sg := range defaultSgs {
+		logging.Logger.Infof("* Default rules for SG %s %s %s\n", sg.GroupId, sg.GroupName, sg.Region)
+	}
+
+	var proceed bool
+	if !c.Bool("force") {
+		prompt := "\nAre you sure you want to nuke the rules in these default security groups ? Enter 'nuke' to confirm: "
+		proceed, err = confirmationPrompt(prompt)
+		if err != nil {
+			return err
+		}
+	}
+
+	if proceed || c.Bool("force") {
+		err := aws.NukeDefaultSecurityGroupRules(defaultSgs)
 		if err != nil {
 			logging.Logger.Errorf("[Failed] %s", err)
 		}

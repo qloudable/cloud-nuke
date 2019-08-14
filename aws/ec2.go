@@ -5,6 +5,7 @@ import (
 	"time"
 
 	awsgo "github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/aws/awserr"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/ec2"
 	"github.com/aws/aws-sdk-go/service/ec2/ec2iface"
@@ -123,8 +124,7 @@ type Vpc struct {
 	svc    ec2iface.EC2API
 }
 
-// NewVpcPerRegion returns a Vpc for each enabled region
-func NewVpcPerRegion(regions []string) ([]Vpc, error) {
+func NewVpcPerRegion(regions []string) []Vpc {
 	var vpcs []Vpc
 	for _, region := range regions {
 		vpc := Vpc{
@@ -133,7 +133,7 @@ func NewVpcPerRegion(regions []string) ([]Vpc, error) {
 		}
 		vpcs = append(vpcs, vpc)
 	}
-	return vpcs, nil
+	return vpcs
 }
 
 func GetDefaultVpcId(vpc Vpc) (string, error) {
@@ -384,7 +384,6 @@ func (v Vpc) nuke() error {
 	return nil
 }
 
-// Deletes all default VPCs
 func NukeVpcs(vpcs []Vpc) error {
 	for _, vpc := range vpcs {
 		err := vpc.nuke()
@@ -404,51 +403,97 @@ type DefaultSecurityGroup struct {
 	svc       ec2iface.EC2API
 }
 
-func GetDefaultSgs(regions []string) ([]DefaultSecurityGroup, error) {
+func DescribeSecurityGroups(svc ec2iface.EC2API) ([]string, error) {
+	var groupIds []string
+	securityGroups, err := svc.DescribeSecurityGroups(&ec2.DescribeSecurityGroupsInput{})
+	if err != nil {
+		return []string{}, errors.WithStackTrace(err)
+	}
+	for _, securityGroup := range securityGroups.SecurityGroups {
+		if *securityGroup.GroupName == "default" {
+			groupIds = append(groupIds, awsgo.StringValue(securityGroup.GroupId))
+		}
+	}
+	return groupIds, nil
+}
+
+func GetSecurityGroups(regions []string) ([]DefaultSecurityGroup, error) {
 	var sgs []DefaultSecurityGroup
 	for _, region := range regions {
-		sg := DefaultSecurityGroup{
-			svc:       GetEc2ServiceClient(region),
-			Region:    region,
-			GroupName: "default",
-		}
-
-		securityGroups, err := sg.svc.DescribeSecurityGroups(
-			&ec2.DescribeSecurityGroupsInput{
-				GroupNames: []*string{awsgo.String("default")},
-			},
-		)
+		svc := GetEc2ServiceClient(region)
+		groupIds, err := DescribeSecurityGroups(svc)
 		if err != nil {
 			return []DefaultSecurityGroup{}, errors.WithStackTrace(err)
 		}
-		for _, group := range securityGroups.SecurityGroups {
-			sg.GroupId = awsgo.StringValue(group.GroupId)
+		for _, groupId := range groupIds {
+			sg := DefaultSecurityGroup{
+				GroupId:   groupId,
+				Region:    region,
+				GroupName: "default",
+				svc:       svc,
+			}
+			sgs = append(sgs, sg)
 		}
-
-		sgs = append(sgs, sg)
 	}
 	return sgs, nil
 }
 
-func (sg DefaultSecurityGroup) nuke() error {
-	logging.Logger.Infof("Nuking Security Group %s in region %s", sg.GroupId, sg.Region)
-
-	logging.Logger.Infof("...deleting Security Group %s", sg.GroupId)
-	if sg.GroupName == "default" {
-		_, err := sg.svc.DeleteSecurityGroup(
-			&ec2.DeleteSecurityGroupInput{
-				GroupId: awsgo.String(sg.GroupId),
+func (sg DefaultSecurityGroup) getDefaultSecurityGroupIngressRule() *ec2.RevokeSecurityGroupIngressInput {
+	return &ec2.RevokeSecurityGroupIngressInput{
+		GroupId: awsgo.String(sg.GroupId),
+		IpPermissions: []*ec2.IpPermission{
+			{
+				IpProtocol:       awsgo.String("-1"),
+				FromPort:         awsgo.Int64(0),
+				ToPort:           awsgo.Int64(0),
+				UserIdGroupPairs: []*ec2.UserIdGroupPair{{GroupId: awsgo.String(sg.GroupId)}},
 			},
-		)
+		},
+	}
+}
+
+func (sg DefaultSecurityGroup) getDefaultSecurityGroupEgressRule() *ec2.RevokeSecurityGroupEgressInput {
+	return &ec2.RevokeSecurityGroupEgressInput{
+		GroupId: awsgo.String(sg.GroupId),
+		IpPermissions: []*ec2.IpPermission{
+			{
+				IpProtocol: awsgo.String("-1"),
+				FromPort:   awsgo.Int64(0),
+				ToPort:     awsgo.Int64(0),
+				IpRanges:   []*ec2.IpRange{{CidrIp: awsgo.String("0.0.0.0/0")}},
+			},
+		},
+	}
+}
+
+func (sg DefaultSecurityGroup) nuke() error {
+	logging.Logger.Infof("...revoking default rules from Security Group %s", sg.GroupId)
+	if sg.GroupName == "default" {
+		ingressRule := sg.getDefaultSecurityGroupIngressRule()
+		_, err := sg.svc.RevokeSecurityGroupIngress(ingressRule)
 		if err != nil {
-			return errors.WithStackTrace(err)
+			if awsErr, isAwsErr := err.(awserr.Error); isAwsErr && awsErr.Code() == "InvalidPermission.NotFound" {
+				logging.Logger.Infof("Egress rule not present (ok)")
+			} else {
+				return fmt.Errorf("error deleting ingress rule: %s", errors.WithStackTrace(err))
+			}
+		}
+
+		egressRule := sg.getDefaultSecurityGroupEgressRule()
+		_, err = sg.svc.RevokeSecurityGroupEgress(egressRule)
+		if err != nil {
+			if awsErr, isAwsErr := err.(awserr.Error); isAwsErr && awsErr.Code() == "InvalidPermission.NotFound" {
+				logging.Logger.Infof("Ingress rule not present (ok)")
+			} else {
+				return fmt.Errorf("error deleting eggress rule: %s", errors.WithStackTrace(err))
+			}
 		}
 	}
 	return nil
 }
 
 // Deletes all default security groups for a given region
-func NukeDefaultSecurityGroups(sgs []DefaultSecurityGroup) error {
+func NukeDefaultSecurityGroupRules(sgs []DefaultSecurityGroup) error {
 	for _, sg := range sgs {
 		err := sg.nuke()
 		if err != nil {
