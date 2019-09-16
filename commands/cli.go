@@ -138,13 +138,6 @@ func awsNuke(c *cli.Context) error {
 		}
 	}
 	
-	for _, region := range includedRegions {
-		// Ignore all cli excluded regions
-		if collections.ListContainsElement(excludedRegions, region) {
-			excludedRegions = remove(excludedRegions, region)
-			//excludedRegions = append(a[:i], a[i+1:]...)
-		}
-	}
 	
 
 	//for _, excludedRegion := range excludedRegions {
