@@ -130,10 +130,19 @@ func awsNuke(c *cli.Context) error {
 	
 	excludedRegions := regions
 	
+	for i, region := range excludedRegions {
+		// Ignore all cli excluded regions
+		if collections.ListContainsElement(includedRegions, region) {
+			excludedRegions = append(excludedRegions[:i], excludedRegions[i+1:]...)
+			//excludedRegions = append(a[:i], a[i+1:]...)
+		}
+	}
+	
 	for _, region := range includedRegions {
 		// Ignore all cli excluded regions
 		if collections.ListContainsElement(excludedRegions, region) {
-			excludedRegions = remove(excludedRegions, region)			
+			excludedRegions = remove(excludedRegions, region)
+			//excludedRegions = append(a[:i], a[i+1:]...)
 		}
 	}
 	
