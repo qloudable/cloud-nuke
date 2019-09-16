@@ -30,9 +30,13 @@ func CreateCli(version string) *cli.App {
 			Usage:  "BEWARE: DESTRUCTIVE OPERATION! Nukes AWS resources (ASG, ELB, ELBv2, EBS, EC2, AMI, Snapshots, Elastic IP).",
 			Action: errors.WithPanicHandling(awsNuke),
 			Flags: []cli.Flag{
+				//cli.StringSliceFlag{
+				//	Name:  "exclude-region",
+				//	Usage: "regions to exclude",
+				//},
 				cli.StringSliceFlag{
-					Name:  "exclude-region",
-					Usage: "regions to exclude",
+					Name:  "include-region",
+					Usage: "regions to include",
 				},
 				cli.StringSliceFlag{
 					Name:  "resource-type",
@@ -111,16 +115,37 @@ func awsNuke(c *cli.Context) error {
 	if err != nil {
 		return errors.WithStackTrace(err)
 	}
-	excludedRegions := c.StringSlice("exclude-region")
-
-	for _, excludedRegion := range excludedRegions {
-		if !collections.ListContainsElement(regions, excludedRegion) {
-			return InvalidFlagError{
-				Name:  "exclude-regions",
-				Value: excludedRegion,
+	//excludedRegions := c.StringSlice("exclude-region")
+	
+	includedRegions := c.StringSlice("include-region")
+	
+	for _, includedRegion := range includedRegions {
+		if !collections.ListContainsElement(regions, includedRegion) {
+			return InvalidFlagError{				
+				Name:  "include-regions",
+				Value: includedRegion,
 			}
 		}
 	}
+	
+	excludedRegions := regions
+	
+	for _, region := range includedRegions {
+		// Ignore all cli excluded regions
+		if collections.ListContainsElement(excludedRegions, region) {
+			excludedRegions = remove(excludedRegions, region)			
+		}
+	}
+	
+
+	//for _, excludedRegion := range excludedRegions {
+	//	if !collections.ListContainsElement(regions, excludedRegion) {
+	//		return InvalidFlagError{
+	//			Name:  "exclude-regions",
+	//			Value: excludedRegion,
+	//		}
+	//	}
+	//}
 
 	excludeAfter, err := parseDurationParam(c.String("older-than"))
 	if err != nil {
